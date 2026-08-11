@@ -1,0 +1,6 @@
+{
+  "name": "Clip Station",
+  "description": "Cross-platform React Native & Expo mobile video editing application for Android and iOS with Geometric Balance theme, multi-track timeline, trim, split, speed, filters, text, audio, and native video export architecture.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Clip Station",
+    "slug": "clip-station",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#050505"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.clipstation.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Clip Station needs access to your photo library to import video and image clips for editing.",
+        "NSPhotoLibraryAddUsageDescription": "Clip Station needs permission to save exported videos to your photo library.",
+        "NSCameraUsageDescription": "Clip Station needs camera access to capture video clips directly.",
+        "NSMicrophoneUsageDescription": "Clip Station needs microphone access to record audio."
+      }
+    },
+    "android": {
+      "package": "com.clipstation.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#050505"
+      },
+      "permissions": [
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_MEDIA_VIDEO",
+        "READ_MEDIA_IMAGES",
+        "CAMERA",
+        "RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Clip Station to access your photos and videos to import media for video editing.",
+          "cameraPermission": "Allow Clip Station to access your camera to capture video."
+        }
+      ]
+    ]
+  }
+}
