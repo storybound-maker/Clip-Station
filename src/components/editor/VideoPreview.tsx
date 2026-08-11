@@ -10,32 +10,26 @@ export const VideoPreview: React.FC = () => {
   const lastTickRef = useRef<number>(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-
   const active = activeProject ? getActiveClipAtTime(activeProject.clips, currentTime) : { clip: null, clipLocalTime: 0, clipIndex: -1 };
   const clip = active.clip;
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !clip || clip.type !== 'video') return;
-    const target = Math.max(0, clipLocalTime(clip, currentTime));
-    if (Math.abs(video.currentTime - target) > 0.08) video.currentTime = target;
+    if (Math.abs(video.currentTime - active.clipLocalTime) > 0.08) video.currentTime = active.clipLocalTime;
     video.playbackRate = Math.max(0.05, clip.speed || 1);
     video.volume = isMuted ? 0 : Math.min(1, Math.max(0, (clip.volume ?? 100) / 100));
     if (isPlaying) video.play().catch(() => undefined); else video.pause();
-  }, [clip?.id, active.clipLocalTime, currentTime, isPlaying, isMuted, clip]);
+  }, [clip?.id, active.clipLocalTime, isPlaying, isMuted, clip]);
 
   useEffect(() => {
     if (!isPlaying || !activeProject) return;
     lastTickRef.current = performance.now();
     const tick = (now: number) => {
-      const delta = Math.min(0.1, Math.max(0, (now - lastTickRef.current) / 1000));
+      const delta = Math.min(0.08, Math.max(0, (now - lastTickRef.current) / 1000));
       lastTickRef.current = now;
       const next = currentTime + delta;
-      if (next >= activeProject.duration) {
-        setCurrentTime(0);
-        setIsPlaying(false);
-        return;
-      }
+      if (next >= activeProject.duration) { setCurrentTime(0); setIsPlaying(false); return; }
       setCurrentTime(next);
       animationRef.current = requestAnimationFrame(tick);
     };
@@ -53,15 +47,13 @@ export const VideoPreview: React.FC = () => {
     const next = activeProject.clips.find((c) => c.startTime > currentTime + 0.15);
     setCurrentTime(next?.startTime ?? activeProject.duration);
   };
-
   const ratioClass = activeProject.aspectRatio === '9:16' ? 'aspect-[9/16] max-h-[250px] sm:max-h-[360px] md:max-h-[480px]' : activeProject.aspectRatio === '1:1' ? 'aspect-square max-h-[240px] sm:max-h-[330px] md:max-h-[420px]' : 'aspect-video max-h-[190px] sm:max-h-[280px] md:max-h-[360px]';
 
   return <div className="w-full bg-[#050505] flex flex-col shrink-0 select-none">
     <div className={`relative w-full ${ratioClass} mx-auto overflow-hidden bg-black flex items-center justify-center`}>
       {clip ? <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
-        <div className="relative max-w-full max-h-full w-full h-full overflow-hidden flex items-center justify-center" style={{ filter: getCssFilterString(clip.filters) }}>
+        <div className="relative w-full h-full flex items-center justify-center overflow-hidden" style={{ filter: getCssFilterString(clip.filters), transform: `rotate(${clip.rotation || 0}deg) scale(${clip.rotation % 180 ? 1.04 : 1})` }}>
           {clip.type === 'video' ? <video ref={videoRef} key={clip.id} src={clip.url} className="w-full h-full object-cover pointer-events-none" muted={isMuted || clip.volume === 0} playsInline preload="metadata" /> : <img src={clip.url} alt={clip.name} className="w-full h-full object-cover pointer-events-none" />}
-          <div className="absolute inset-0 pointer-events-none" style={{ transform: `rotate(${clip.rotation || 0}deg) scale(${clip.rotation % 180 ? 1.05 : 1})`, background: 'transparent' }} />
         </div>
         {activeProject.textLayers.map((text) => textVisible(text, currentTime) ? <div key={text.id} onClick={() => setSelectedTextLayerId(text.id)} style={{ top: `${text.y}%`, left: `${text.x}%`, transform: 'translate(-50%, -50%)', fontSize: `${text.fontSize}px`, color: text.color || '#fff', backgroundColor: text.backgroundColor || 'transparent', fontWeight: text.isBold ? 800 : 400, fontStyle: text.isItalic ? 'italic' : 'normal' }} className={`absolute z-20 px-2 py-1 rounded cursor-pointer ${selectedTextLayerId === text.id ? 'outline outline-1 outline-white shadow-[0_0_12px_rgba(255,255,255,.8)]' : ''}`}>{text.text}</div> : null)}
       </div> : <span className="text-[9px] uppercase tracking-widest text-[#555]">No clip at playhead</span>}
@@ -83,8 +75,4 @@ export const VideoPreview: React.FC = () => {
 
 function textVisible(text: { startTime: number; duration: number }, time: number) {
   return time >= text.startTime && time <= text.startTime + text.duration;
-}
-
-function clipLocalTime(clip: { sourceIn: number; sourceOut: number; speed: number }, timelineTime: number) {
-  return Math.min(clip.sourceOut, Math.max(clip.sourceIn, clip.sourceIn + Math.max(0, timelineTime - 0) * clip.speed));
 }
