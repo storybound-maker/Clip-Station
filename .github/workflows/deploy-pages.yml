@@ -2,7 +2,8 @@ name: Deploy Clip Station to GitHub Pages
 
 on:
   push:
-    branches: [clip-station-recovery]
+    branches:
+      - clip-station-recovery
   workflow_dispatch:
 
 permissions:
@@ -17,35 +18,45 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
-          cache-dependency-path: package.json
+          cache-dependency-path: package-lock.json
+
       - name: Install dependencies
-        run: npm install
-      - name: Build
+        run: npm ci
+
+      - name: Build Clip Station
         run: npm run build
         env:
-          GITHUB_PAGES: 'true'
-      - name: Setup Pages
+          GITHUB_PAGES: "true"
+
+      - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
         with:
           path: ./dist
 
   deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
+
     steps:
-      - name: Deploy
+      - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
