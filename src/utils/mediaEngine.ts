@@ -1,401 +1,225 @@
-import { Clip, Project, TextLayer } from '../types';
+import { Clip, Project } from '../types';
 
-/**
- * Format time in seconds to MM:SS.SS or MM:SS
- */
-export function formatTime(seconds: number, includeMillis: boolean = true): string {
-  if (isNaN(seconds) || seconds < 0) seconds = 0;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  const millis = Math.floor((seconds % 1) * 100);
-
-  const pad = (num: number) => num.toString().padStart(2, '0');
-
-  if (includeMillis) {
-    return `${pad(mins)}:${pad(secs)}.${pad(millis)}`;
-  }
-  return `${pad(mins)}:${pad(secs)}`;
+export function formatTime(seconds: number, includeMillis = true): string {
+  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  const mins = Math.floor(safe / 60);
+  const secs = Math.floor(safe % 60);
+  const millis = Math.floor((safe % 1) * 100);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return includeMillis ? `${pad(mins)}:${pad(secs)}.${pad(millis)}` : `${pad(mins)}:${pad(secs)}`;
 }
 
-/**
- * Recalculate timeline positions and total project duration
- */
 export function recalculateTimeline(clips: Clip[]): { clips: Clip[]; totalDuration: number } {
-  let currentTime = 0;
-  const updatedClips = clips.map((clip) => {
-    // Effective duration on timeline considering speed
-    const effectiveDuration = (clip.sourceOut - clip.sourceIn) / (clip.speed || 1);
-    const updatedClip: Clip = {
-      ...clip,
-      startTime: currentTime,
-      duration: Math.max(0.1, effectiveDuration),
-    };
-    currentTime += updatedClip.duration;
-    return updatedClip;
+  let cursor = 0;
+  const normalized = clips.map((clip) => {
+    const speed = Math.max(0.05, clip.speed || 1);
+    const sourceIn = Math.max(0, Math.min(clip.sourceIn, clip.originalDuration));
+    const sourceOut = Math.max(sourceIn + 0.05, Math.min(clip.originalDuration, clip.sourceOut));
+    const duration = Math.max(0.05, (sourceOut - sourceIn) / speed);
+    const next = { ...clip, sourceIn, sourceOut, startTime: cursor, duration };
+    cursor += duration;
+    return next;
   });
-
-  return {
-    clips: updatedClips,
-    totalDuration: Math.max(1, currentTime),
-  };
+  return { clips: normalized, totalDuration: Math.max(0.05, cursor) };
 }
 
-/**
- * Find which clip is active at the given timeline time position
- */
-export function getActiveClipAtTime(
-  clips: Clip[],
-  time: number
-): { clip: Clip | null; clipLocalTime: number; clipIndex: number } {
+export function getActiveClipAtTime(clips: Clip[], time: number): { clip: Clip | null; clipLocalTime: number; clipIndex: number } {
+  if (!clips.length) return { clip: null, clipLocalTime: 0, clipIndex: -1 };
+  const safeTime = Math.max(0, time);
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i];
-    if (time >= clip.startTime && time <= clip.startTime + clip.duration) {
-      // Local time inside the source video
-      const offsetOnTimeline = time - clip.startTime;
-      const clipLocalTime = clip.sourceIn + offsetOnTimeline * clip.speed;
-      return { clip, clipLocalTime, clipIndex: i };
+    const end = clip.startTime + clip.duration;
+    const isLast = i === clips.length - 1;
+    if (safeTime >= clip.startTime && (safeTime < end || (isLast && safeTime <= end))) {
+      const local = clip.sourceIn + Math.min(clip.duration, safeTime - clip.startTime) * (clip.speed || 1);
+      return { clip, clipLocalTime: Math.min(clip.sourceOut, local), clipIndex: i };
     }
   }
-
-  // If time exceeds last clip, return last clip or null
-  if (clips.length > 0) {
-    if (time < clips[0].startTime) {
-      return { clip: clips[0], clipLocalTime: clips[0].sourceIn, clipIndex: 0 };
-    }
-    const last = clips[clips.length - 1];
-    return { clip: last, clipLocalTime: last.sourceOut, clipIndex: clips.length - 1 };
-  }
-
-  return { clip: null, clipLocalTime: 0, clipIndex: -1 };
+  const last = clips[clips.length - 1];
+  return { clip: last, clipLocalTime: last.sourceOut, clipIndex: clips.length - 1 };
 }
 
-/**
- * Split a clip at a given timeline split time
- */
-export function splitClipAtTime(
-  clip: Clip,
-  splitTimelineTime: number
-): { clip1: Clip; clip2: Clip } | null {
-  if (
-    splitTimelineTime <= clip.startTime + 0.1 ||
-    splitTimelineTime >= clip.startTime + clip.duration - 0.1
-  ) {
-    return null; // Too close to boundaries
-  }
-
-  const offsetOnTimeline = splitTimelineTime - clip.startTime;
-  const sourceSplitPoint = clip.sourceIn + offsetOnTimeline * clip.speed;
-
-  const clip1: Clip = {
-    ...clip,
-    id: `clip_${Date.now()}_1`,
-    sourceOut: sourceSplitPoint,
-    duration: offsetOnTimeline,
+export function splitClipAtTime(clip: Clip, splitTimelineTime: number): { clip1: Clip; clip2: Clip } | null {
+  const relative = splitTimelineTime - clip.startTime;
+  if (relative <= 0.15 || relative >= clip.duration - 0.15) return null;
+  const sourceSplit = clip.sourceIn + relative * (clip.speed || 1);
+  if (sourceSplit <= clip.sourceIn + 0.05 || sourceSplit >= clip.sourceOut - 0.05) return null;
+  const stamp = Date.now();
+  return {
+    clip1: { ...clip, id: `clip_${stamp}_a`, sourceOut: sourceSplit, duration: relative },
+    clip2: { ...clip, id: `clip_${stamp}_b`, sourceIn: sourceSplit, duration: clip.duration - relative },
   };
-
-  const clip2: Clip = {
-    ...clip,
-    id: `clip_${Date.now()}_2`,
-    startTime: splitTimelineTime,
-    sourceIn: sourceSplitPoint,
-    duration: clip.duration - offsetOnTimeline,
-  };
-
-  return { clip1, clip2 };
 }
 
-/**
- * Generate CSS filter string from filter settings
- */
 export function getCssFilterString(filters: Clip['filters']): string {
   if (!filters) return 'none';
-  const brightness = 100 + filters.brightness;
-  const contrast = 100 + filters.contrast;
-  const saturate = 100 + filters.saturation;
-  return `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturate}%)`;
+  return `brightness(${100 + filters.brightness}%) contrast(${100 + filters.contrast}%) saturate(${100 + filters.saturation}%)`;
+}
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
+  const target = Math.max(0, Math.min(time, Number.isFinite(video.duration) ? video.duration : time));
+  if (Math.abs(video.currentTime - target) < 0.005 && video.readyState >= 2) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      video.removeEventListener('seeked', finish);
+      resolve();
+    };
+    video.addEventListener('seeked', finish, { once: true });
+    video.currentTime = target;
+    window.setTimeout(finish, 1500);
+  });
+}
+
+function getOutputSize(project: Project, resolution: '720p' | '1080p' | '4K') {
+  const base = resolution === '4K' ? 2160 : resolution === '1080p' ? 1080 : 720;
+  switch (project.aspectRatio) {
+    case '9:16': return { width: base, height: Math.round(base * 16 / 9) };
+    case '1:1': return { width: base, height: base };
+    case '4:5': return { width: base, height: Math.round(base * 5 / 4) };
+    default: return { width: base, height: Math.round(base * 9 / 16) };
+  }
+}
+
+function pickMimeType(): string {
+  if (typeof MediaRecorder === 'undefined') throw new Error('This browser does not provide MediaRecorder export support.');
+  const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+  return candidates.find((mime) => MediaRecorder.isTypeSupported(mime)) || '';
 }
 
 /**
- * High-performance Video Canvas Exporter
- * Renders real video frames, images, filters, and text layers onto a canvas stream,
- * encoding them into an actual playable/downloadable video blob (MP4/WebM).
+ * Stable browser export path. It intentionally uses the browser's supported
+ * MediaRecorder container instead of pretending a WebM stream is an MP4 file.
+ * Native Android/iOS export remains the place for deterministic H.264 MP4.
  */
 export async function exportVideoCanvas(
   project: Project,
   exportResolution: '720p' | '1080p' | '4K',
   exportFps: number,
-  onProgress: (percent: number, status: string) => void
+  onProgress: (percent: number, status: string) => void,
 ): Promise<string> {
-  let width = 1920;
-  let height = 1080;
+  if (typeof document === 'undefined') throw new Error('Browser export is unavailable in this runtime.');
+  const mime = pickMimeType();
+  if (!mime) throw new Error('No supported browser video export format was found.');
 
-  if (project.aspectRatio === '9:16') {
-    width = exportResolution === '4K' ? 2160 : exportResolution === '1080p' ? 1080 : 720;
-    height = exportResolution === '4K' ? 3840 : exportResolution === '1080p' ? 1920 : 1280;
-  } else if (project.aspectRatio === '1:1') {
-    width = exportResolution === '4K' ? 2160 : exportResolution === '1080p' ? 1080 : 720;
-    height = width;
-  } else if (project.aspectRatio === '16:9') {
-    width = exportResolution === '4K' ? 3840 : exportResolution === '1080p' ? 1920 : 1280;
-    height = exportResolution === '4K' ? 2160 : exportResolution === '1080p' ? 1080 : 720;
-  } else {
-    width = 1080;
-    height = 1350;
-  }
-
-  onProgress(5, 'Preloading clip video & image assets...');
-
-  const mediaElements = new Map<string, HTMLVideoElement | HTMLImageElement>();
-
-  for (const clip of project.clips) {
-    if (!mediaElements.has(clip.url)) {
-      if (clip.type === 'video') {
-        const vid = document.createElement('video');
-        vid.crossOrigin = 'anonymous';
-        vid.preload = 'auto';
-        vid.muted = true;
-        vid.playsInline = true;
-        vid.src = clip.url;
-        await new Promise((res) => {
-          vid.onloadeddata = res;
-          vid.onerror = res;
-          setTimeout(res, 2000);
-        });
-        mediaElements.set(clip.url, vid);
-      } else {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.src = clip.url;
-        await new Promise((res) => {
-          img.onload = res;
-          img.onerror = res;
-          setTimeout(res, 2000);
-        });
-        mediaElements.set(clip.url, img);
-      }
-    }
-  }
-
+  const { width, height } = getOutputSize(project, exportResolution);
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Could not obtain 2D rendering context');
+  if (!ctx) throw new Error('Could not create the export canvas.');
 
-  const stream = typeof (canvas as any).captureStream === 'function' ? (canvas as any).captureStream(0) : null;
-  const videoTrack = stream ? stream.getVideoTracks()[0] : null;
-  const hasRequestFrame = videoTrack && typeof (videoTrack as any).requestFrame === 'function';
-
-  // Fallback to auto-capture stream if requestFrame is unavailable
-  const activeStream = hasRequestFrame ? stream : (canvas as any).captureStream(exportFps);
-
-  let selectedMime = 'video/webm';
-  const candidateMimes = [
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm',
-    'video/mp4',
-  ];
-
-  for (const mime of candidateMimes) {
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) {
-      selectedMime = mime;
-      break;
+  onProgress(3, 'Loading project media...');
+  const media = new Map<string, HTMLVideoElement | HTMLImageElement>();
+  for (const clip of project.clips) {
+    if (media.has(clip.url)) continue;
+    if (clip.type === 'video') {
+      const video = document.createElement('video');
+      video.preload = 'auto';
+      video.muted = true;
+      video.playsInline = true;
+      video.crossOrigin = 'anonymous';
+      video.src = clip.url;
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        video.addEventListener('loadeddata', done, { once: true });
+        video.addEventListener('error', done, { once: true });
+        window.setTimeout(done, 2500);
+        video.load();
+      });
+      media.set(clip.url, video);
+    } else {
+      const image = new Image();
+      image.crossOrigin = 'anonymous';
+      image.src = clip.url;
+      await new Promise<void>((resolve) => {
+        image.onload = () => resolve();
+        image.onerror = () => resolve();
+        window.setTimeout(resolve, 2500);
+      });
+      media.set(clip.url, image);
     }
   }
 
-  const mediaRecorder = new MediaRecorder(activeStream, { mimeType: selectedMime });
+  const stream = canvas.captureStream(exportFps);
+  const recorder = new MediaRecorder(stream, { mimeType });
   const chunks: Blob[] = [];
+  recorder.ondataavailable = (event) => { if (event.data?.size) chunks.push(event.data); };
 
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data && e.data.size > 0) chunks.push(e.data);
-  };
-
-  return new Promise((resolve, reject) => {
-    mediaRecorder.onstop = () => {
-      const finalBlob = new Blob(chunks, { type: selectedMime || 'video/mp4' });
-      if (finalBlob.size === 0) {
-        reject(new Error('Exported video file is empty (0 bytes). Please try again.'));
-        return;
-      }
-      const videoUrl = URL.createObjectURL(finalBlob);
-      onProgress(100, 'Export complete!');
-      resolve(videoUrl);
+  const result = new Promise<string>((resolve, reject) => {
+    recorder.onerror = () => reject(new Error('The browser video recorder stopped unexpectedly.'));
+    recorder.onstop = () => {
+      stream.getTracks().forEach((track) => track.stop());
+      const blob = new Blob(chunks, { type: mime });
+      if (!blob.size) { reject(new Error('Export produced an empty video file.')); return; }
+      onProgress(100, 'Export complete.');
+      resolve(URL.createObjectURL(blob));
     };
-
-    mediaRecorder.onerror = (e) => reject(e);
-
-    mediaRecorder.start(100);
-
-    const totalDuration = project.duration;
-    const totalFrames = Math.max(15, Math.ceil(totalDuration * exportFps));
-    let frameIndex = 0;
-
-    const renderNextFrame = async () => {
-      if (frameIndex >= totalFrames) {
-        onProgress(98, 'Finalizing output video stream...');
-        setTimeout(() => {
-          if (mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop();
-          }
-        }, 200);
-        return;
-      }
-
-      const currentTime = (frameIndex / totalFrames) * totalDuration;
-      const percent = Math.min(95, Math.floor((frameIndex / totalFrames) * 90) + 8);
-      onProgress(percent, `Rendering frame ${frameIndex + 1}/${totalFrames} (${currentTime.toFixed(1)}s)...`);
-
-      // Clear Canvas
-      ctx.fillStyle = '#050505';
-      ctx.fillRect(0, 0, width, height);
-
-      // Get active clip for timestamp
-      const { clip, clipLocalTime } = getActiveClipAtTime(project.clips, currentTime);
-
-      if (clip) {
-        const media = mediaElements.get(clip.url);
-
-        ctx.save();
-        ctx.translate(width / 2, height / 2);
-
-        if (clip.rotation) {
-          ctx.rotate((clip.rotation * Math.PI) / 180);
-        }
-
-        const f = clip.filters || { brightness: 0, contrast: 0, saturation: 0, exposure: 0, vignette: 0 };
-        const brightnessVal = 100 + f.brightness;
-        const contrastVal = 100 + f.contrast;
-        const saturateVal = 100 + f.saturation;
-        ctx.filter = `brightness(${brightnessVal}%) contrast(${contrastVal}%) saturate(${saturateVal}%)`;
-
-        if (clip.type === 'video' && media instanceof HTMLVideoElement) {
-          if (Math.abs(media.currentTime - clipLocalTime) > 0.03) {
-            await new Promise<void>((resolveSeek) => {
-              let isDone = false;
-              const handleSeeked = () => {
-                if (!isDone) {
-                  isDone = true;
-                  media.removeEventListener('seeked', handleSeeked);
-                  resolveSeek();
-                }
-              };
-              media.addEventListener('seeked', handleSeeked);
-              media.currentTime = clipLocalTime;
-              setTimeout(() => {
-                if (!isDone) {
-                  isDone = true;
-                  media.removeEventListener('seeked', handleSeeked);
-                  resolveSeek();
-                }
-              }, 100);
-            });
-          }
-        }
-
-        const mediaWidth =
-          media instanceof HTMLVideoElement
-            ? media.videoWidth || width
-            : media instanceof HTMLImageElement
-            ? media.naturalWidth || width
-            : width;
-        const mediaHeight =
-          media instanceof HTMLVideoElement
-            ? media.videoHeight || height
-            : media instanceof HTMLImageElement
-            ? media.naturalHeight || height
-            : height;
-
-        let sx = 0;
-        let sy = 0;
-        let sWidth = mediaWidth;
-        let sHeight = mediaHeight;
-
-        if (clip.crop?.ratio && clip.crop.ratio !== 'free') {
-          let targetRatio = 1;
-          if (clip.crop.ratio === '16:9') targetRatio = 16 / 9;
-          else if (clip.crop.ratio === '9:16') targetRatio = 9 / 16;
-          else if (clip.crop.ratio === '1:1') targetRatio = 1;
-          else if (clip.crop.ratio === '4:5') targetRatio = 4 / 5;
-          else if (clip.crop.ratio === '4:3') targetRatio = 4 / 3;
-
-          const currentRatio = mediaWidth / mediaHeight;
-          if (currentRatio > targetRatio) {
-            sWidth = mediaHeight * targetRatio;
-            sHeight = mediaHeight;
-            sx = (mediaWidth - sWidth) / 2;
-          } else {
-            sWidth = mediaWidth;
-            sHeight = mediaWidth / targetRatio;
-            sy = (mediaHeight - sHeight) / 2;
-          }
-        }
-
-        let drawW = width;
-        let drawH = height;
-        if (clip.rotation === 90 || clip.rotation === 270) {
-          drawW = height;
-          drawH = width;
-        }
-
-        try {
-          ctx.drawImage(media, sx, sy, sWidth, sHeight, -drawW / 2, -drawH / 2, drawW, drawH);
-        } catch {
-          ctx.fillStyle = '#1A1A1A';
-          ctx.fillRect(-drawW / 2, -drawH / 2, drawW, drawH);
-        }
-
-        ctx.restore();
-      }
-
-      // Render Active Text Layers
-      project.textLayers.forEach((textLayer) => {
-        if (
-          currentTime >= textLayer.startTime &&
-          currentTime <= textLayer.startTime + textLayer.duration
-        ) {
-          ctx.save();
-          const posX = (textLayer.x / 100) * width;
-          const posY = (textLayer.y / 100) * height;
-
-          ctx.font = `${textLayer.isBold ? 'bold' : 'normal'} ${textLayer.fontSize * (width / 500)}px ${textLayer.fontFamily || 'sans-serif'}`;
-          ctx.textAlign = textLayer.alignment || 'center';
-
-          if (textLayer.backgroundColor && textLayer.backgroundColor !== 'transparent') {
-            ctx.fillStyle = textLayer.backgroundColor;
-            const textMetrics = ctx.measureText(textLayer.text);
-            const padding = 16;
-            ctx.fillRect(
-              posX - textMetrics.width / 2 - padding,
-              posY - textLayer.fontSize * (width / 500) - padding / 2,
-              textMetrics.width + padding * 2,
-              textLayer.fontSize * (width / 500) * 1.4
-            );
-          }
-
-          ctx.fillStyle = textLayer.color || '#FFFFFF';
-          ctx.fillText(textLayer.text, posX, posY);
-          ctx.restore();
-        }
-      });
-
-      // Watermark
-      ctx.save();
-      ctx.font = '700 18px sans-serif';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-      ctx.textAlign = 'right';
-      ctx.fillText('CLIP STATION', width - 24, height - 24);
-      ctx.restore();
-
-      // Trigger precise frame capture if videoTrack requestFrame is available
-      if (hasRequestFrame && typeof (videoTrack as any).requestFrame === 'function') {
-        (videoTrack as any).requestFrame();
-      }
-
-      frameIndex++;
-      setTimeout(renderNextFrame, hasRequestFrame ? 5 : 1000 / exportFps);
-    };
-
-    renderNextFrame();
   });
+
+  recorder.start(250);
+  const frameDuration = 1 / Math.max(1, exportFps);
+  const totalFrames = Math.max(1, Math.ceil(project.duration * exportFps));
+
+  for (let frame = 0; frame < totalFrames; frame++) {
+    const timelineTime = Math.min(project.duration, frame * frameDuration);
+    const { clip, clipLocalTime } = getActiveClipAtTime(project.clips, timelineTime);
+    ctx.save();
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, width, height);
+
+    if (clip) {
+      const source = media.get(clip.url);
+      if (source) {
+        if (source instanceof HTMLVideoElement) await seekVideo(source, clipLocalTime);
+        const sourceWidth = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+        const sourceHeight = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+        const sw = sourceWidth || width;
+        const sh = sourceHeight || height;
+        let cropW = sw;
+        let cropH = sh;
+        const ratio = clip.crop?.ratio;
+        if (ratio && ratio !== 'free') {
+          const target = ratio === '9:16' ? 9/16 : ratio === '16:9' ? 16/9 : ratio === '1:1' ? 1 : ratio === '4:5' ? 4/5 : 4/3;
+          const current = sw / sh;
+          if (current > target) cropW = sh * target; else cropH = sw / target;
+        }
+        const sx = (sw - cropW) / 2;
+        const sy = (sh - cropH) / 2;
+        const scale = Math.max(width / cropW, height / cropH);
+        const drawW = cropW * scale;
+        const drawH = cropH * scale;
+        ctx.translate(width / 2, height / 2);
+        ctx.rotate(((clip.rotation || 0) * Math.PI) / 180);
+        ctx.filter = getCssFilterString(clip.filters);
+        ctx.drawImage(source, sx, sy, cropW, cropH, -drawW / 2, -drawH / 2, drawW, drawH);
+      }
+    }
+    ctx.restore();
+
+    for (const text of project.textLayers) {
+      if (timelineTime < text.startTime || timelineTime > text.startTime + text.duration) continue;
+      ctx.save();
+      ctx.fillStyle = text.backgroundColor && text.backgroundColor !== 'transparent' ? text.backgroundColor : 'transparent';
+      ctx.font = `${text.isBold ? '700' : '400'} ${Math.max(12, text.fontSize * width / 500)}px sans-serif`;
+      ctx.textAlign = text.alignment || 'center';
+      const x = (text.x / 100) * width;
+      const y = (text.y / 100) * height;
+      const metrics = ctx.measureText(text.text);
+      if (ctx.fillStyle !== 'transparent') ctx.fillRect(x - metrics.width / 2 - 10, y - text.fontSize, metrics.width + 20, text.fontSize * 1.5);
+      ctx.fillStyle = text.color || '#fff';
+      ctx.fillText(text.text, x, y);
+      ctx.restore();
+    }
+
+    onProgress(Math.min(96, Math.round(((frame + 1) / totalFrames) * 96)), `Rendering ${frame + 1}/${totalFrames}`);
+    await wait(frameDuration * 1000);
+  }
+
+  recorder.stop();
+  return result;
 }
