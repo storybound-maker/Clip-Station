@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { ZoomIn, ZoomOut, Film, Type, Music, Scissors, GripVertical } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ZoomIn, ZoomOut, Film, Type, Music, GripVertical } from 'lucide-react';
 import { useProject } from '../../context/ProjectContext';
 import { formatTime } from '../../utils/mediaEngine';
 import { Clip } from '../../types';
@@ -11,9 +11,7 @@ export const Timeline: React.FC = () => {
     setCurrentTime,
     selectedClipId,
     setSelectedClipId,
-    selectedTextLayerId,
     setSelectedTextLayerId,
-    selectedAudioLayerId,
     setSelectedAudioLayerId,
     zoomLevel,
     setZoomLevel,
@@ -22,311 +20,169 @@ export const Timeline: React.FC = () => {
   } = useProject();
 
   const timelineRef = useRef<HTMLDivElement | null>(null);
+  const [draggingClip, setDraggingClip] = useState<number | null>(null);
+  const dragStartX = useRef(0);
+  const dragMoved = useRef(false);
+  const initialIndex = useRef(0);
 
   if (!activeProject) return null;
 
-  const pixelsPerSecond = zoomLevel; // e.g. 30px per second
-  const totalTimelineWidth = Math.max(300, activeProject.duration * pixelsPerSecond);
+  const pixelsPerSecond = zoomLevel;
+  const totalTimelineWidth = Math.max(360, activeProject.duration * pixelsPerSecond);
 
-  const handleClipDragStart = (
-    e: React.MouseEvent | React.TouchEvent,
-    clipIndex: number
-  ) => {
-    if ((e.target as HTMLElement).closest('.trim-handle')) return;
-
-    const startX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    let lastTargetIdx = clipIndex;
-
-    const onMove = (moveEv: MouseEvent | TouchEvent) => {
-      const currentX = 'touches' in moveEv ? moveEv.touches[0].clientX : (moveEv as MouseEvent).clientX;
-      const deltaX = currentX - startX;
-
-      const stepWidth = 50;
-      const shift = Math.round(deltaX / stepWidth);
-      const targetIdx = Math.max(0, Math.min(activeProject.clips.length - 1, clipIndex + shift));
-
-      if (targetIdx !== lastTargetIdx) {
-        lastTargetIdx = targetIdx;
-        reorderClips(clipIndex, targetIdx);
-      }
-    };
-
-    const onEnd = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onEnd);
-      window.removeEventListener('touchmove', onMove);
-      window.removeEventListener('touchend', onEnd);
-    };
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onEnd);
-    window.addEventListener('touchmove', onMove);
-    window.addEventListener('touchend', onEnd);
-  };
-
-  const handleTrimDragStart = (
-    e: React.MouseEvent | React.TouchEvent,
-    clip: Clip,
-    handle: 'left' | 'right'
-  ) => {
+  const beginClipDrag = (e: React.PointerEvent, clipIndex: number) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.trim-handle')) return;
     e.stopPropagation();
-    const startX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const initialSourceIn = clip.sourceIn;
-    const initialSourceOut = clip.sourceOut;
+    dragStartX.current = e.clientX;
+    initialIndex.current = clipIndex;
+    dragMoved.current = false;
+    setDraggingClip(clipIndex);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+
+  useEffect(() => {
+    if (draggingClip === null) return;
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (Math.abs(e.clientX - dragStartX.current) > 8) dragMoved.current = true;
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (dragMoved.current) {
+        const deltaX = e.clientX - dragStartX.current;
+        const stepWidth = Math.max(50, pixelsPerSecond * 1.25);
+        const targetIndex = Math.max(
+          0,
+          Math.min(activeProject.clips.length - 1, initialIndex.current + Math.round(deltaX / stepWidth))
+        );
+        if (targetIndex !== initialIndex.current) reorderClips(initialIndex.current, targetIndex);
+      }
+      setDraggingClip(null);
+      dragMoved.current = false;
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [draggingClip, pixelsPerSecond, activeProject.clips.length, reorderClips]);
+
+  const handleTrimStart = (e: React.PointerEvent, clip: Clip, handle: 'left' | 'right') => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    const initialIn = clip.sourceIn;
+    const initialOut = clip.sourceOut;
     const speed = clip.speed || 1;
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
 
-    const onMove = (moveEv: MouseEvent | TouchEvent) => {
-      const currentX = 'touches' in moveEv ? moveEv.touches[0].clientX : (moveEv as MouseEvent).clientX;
-      const deltaX = currentX - startX;
-      const deltaTime = (deltaX / pixelsPerSecond) * speed;
-
+    const onMove = (move: PointerEvent) => {
+      const deltaTime = ((move.clientX - startX) / pixelsPerSecond) * speed;
       if (handle === 'left') {
-        const newIn = Math.max(0, Math.min(initialSourceOut - 0.2, initialSourceIn + deltaTime));
-        updateClip(clip.id, { sourceIn: newIn });
+        updateClip(clip.id, { sourceIn: Math.max(0, Math.min(initialOut - 0.2, initialIn + deltaTime)) });
       } else {
-        const newOut = Math.max(initialSourceIn + 0.2, Math.min(clip.originalDuration, initialSourceOut + deltaTime));
-        updateClip(clip.id, { sourceOut: newOut });
+        updateClip(clip.id, { sourceOut: Math.max(initialIn + 0.2, Math.min(clip.originalDuration, initialOut + deltaTime)) });
       }
     };
-
-    const onEnd = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onEnd);
-      window.removeEventListener('touchmove', onMove);
-      window.removeEventListener('touchend', onEnd);
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
     };
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onEnd);
-    window.addEventListener('touchmove', onMove);
-    window.addEventListener('touchend', onEnd);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
   };
 
-  // Time ruler ticks every 2 seconds
-  const ticks = [];
-  for (let t = 0; t <= activeProject.duration + 5; t += 2) {
-    ticks.push(t);
-  }
-
-  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!timelineRef.current) return;
+  const handleTimelinePointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!timelineRef.current || draggingClip !== null || dragMoved.current) return;
+    if ((e.target as HTMLElement).closest('.timeline-clip, .timeline-layer')) return;
     const rect = timelineRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left + timelineRef.current.scrollLeft;
-    const clickedTime = Math.max(0, Math.min(activeProject.duration, clickX / pixelsPerSecond));
-    setCurrentTime(clickedTime);
+    const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
+    setCurrentTime(Math.max(0, Math.min(activeProject.duration, x / pixelsPerSecond)));
   };
+
+  const ticks = [];
+  for (let t = 0; t <= activeProject.duration + 2; t += 2) ticks.push(t);
 
   return (
-    <div className="w-full bg-[#050505] border-t border-[#1A1A1A] flex flex-col shrink-0 min-h-[150px] max-h-[200px] select-none overflow-hidden">
-      {/* Timeline Controls Bar (Zoom, Track Status) */}
-      <div className="px-4 py-1.5 bg-[#0A0A0A] border-b border-[#1A1A1A] flex items-center justify-between text-[10px] uppercase font-bold tracking-wider text-[#666666]">
-        <div className="flex items-center gap-2.5">
-          <span className="font-mono text-white font-bold">
-            {formatTime(currentTime)}
-          </span>
-          <span className="text-[#1A1A1A]">|</span>
-          <span className="text-zinc-400 font-bold">{activeProject.clips.length} Clips</span>
+    <section className="w-full bg-[#050505] border-y border-[#1A1A1A] shrink-0 select-none">
+      <div className="h-9 px-3 bg-[#0A0A0A] border-b border-[#1A1A1A] flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-mono text-[10px] font-bold text-white">{formatTime(currentTime)}</span>
+          <span className="text-[#333]">/</span>
+          <span className="font-mono text-[10px] text-[#777]">{formatTime(activeProject.duration)}</span>
+          <span className="hidden sm:inline text-[9px] uppercase tracking-wider text-[#555]">{activeProject.clips.length} clips</span>
         </div>
-
-        {/* Zoom Controls */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setZoomLevel((z) => Math.max(10, z - 10))}
-            className="p-1 rounded-md bg-[#0A0A0A] border border-[#1A1A1A] text-zinc-300 hover:text-white min-w-[32px] min-h-[32px] flex items-center justify-center active:scale-95"
-            title="Zoom Out Timeline"
-          >
-            <ZoomOut className="w-3.5 h-3.5" />
-          </button>
-          <span className="text-[9px] font-mono text-[#666666] hidden sm:inline">Scale: {zoomLevel}px/s</span>
-          <button
-            onClick={() => setZoomLevel((z) => Math.min(100, z + 10))}
-            className="p-1 rounded-md bg-[#0A0A0A] border border-[#1A1A1A] text-zinc-300 hover:text-white min-w-[32px] min-h-[32px] flex items-center justify-center active:scale-95"
-            title="Zoom In Timeline"
-          >
-            <ZoomIn className="w-3.5 h-3.5" />
-          </button>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setZoomLevel((z) => Math.max(12, z - 6))} className="w-8 h-8 rounded-lg border border-[#1A1A1A] bg-[#050505] text-[#888] flex items-center justify-center active:scale-95"><ZoomOut className="w-3.5 h-3.5" /></button>
+          <span className="hidden md:inline text-[8px] font-mono text-[#555] w-14 text-center">{zoomLevel}px/s</span>
+          <button onClick={() => setZoomLevel((z) => Math.min(90, z + 6))} className="w-8 h-8 rounded-lg border border-[#1A1A1A] bg-[#050505] text-[#888] flex items-center justify-center active:scale-95"><ZoomIn className="w-3.5 h-3.5" /></button>
         </div>
       </div>
 
-      {/* Main Horizontal Scrollable Timeline Area */}
       <div
         ref={timelineRef}
-        onClick={handleTimelineClick}
-        className="relative flex-1 overflow-x-auto overflow-y-auto custom-scrollbar bg-[#050505] p-4 cursor-pointer"
+        onPointerDown={handleTimelinePointer}
+        className="relative overflow-x-auto overflow-y-hidden touch-pan-x custom-scrollbar px-3 py-2"
       >
-        <div style={{ width: `${totalTimelineWidth + 120}px` }} className="relative flex flex-col gap-2 min-h-[160px]">
-          {/* Time Ruler Bar */}
-          <div className="relative h-6 border-b border-[#1A1A1A] mb-1 pointer-events-none">
+        <div style={{ width: `${totalTimelineWidth + 24}px` }} className="relative min-h-[126px]">
+          <div className="relative h-6 border-b border-[#1A1A1A] pointer-events-none">
             {ticks.map((tick) => (
-              <div
-                key={tick}
-                style={{ left: `${tick * pixelsPerSecond}px` }}
-                className="absolute top-0 flex flex-col items-start"
-              >
-                <div className="h-2 w-[1px] bg-[#1A1A1A]" />
-                <span className="text-[9px] font-mono text-[#666666] mt-0.5">
-                  {formatTime(tick, false)}
-                </span>
+              <div key={tick} style={{ left: `${tick * pixelsPerSecond}px` }} className="absolute top-0">
+                <div className="h-2 w-px bg-[#333]" />
+                <span className="text-[8px] font-mono text-[#555]">{formatTime(tick, false)}</span>
               </div>
             ))}
           </div>
 
-          {/* MAIN VIDEO TRACK */}
-          <div className="relative h-16 bg-[#0A0A0A] rounded-xl border border-[#1A1A1A] p-1 flex items-center">
-            <div className="absolute left-[-28px] top-1/2 -translate-y-1/2 text-[#666666]">
-              <Film className="w-4 h-4" />
-            </div>
-
+          <div className="relative h-14 mt-2 rounded-lg border border-[#1A1A1A] bg-[#080808]">
+            <div className="absolute -left-1 top-1/2 -translate-x-full -translate-y-1/2 text-[#555]"><Film className="w-3.5 h-3.5" /></div>
             {activeProject.clips.map((clip, index) => {
-              const isSelected = selectedClipId === clip.id;
-              const clipWidth = clip.duration * pixelsPerSecond;
-              const clipLeft = clip.startTime * pixelsPerSecond;
-
+              const selected = selectedClipId === clip.id;
+              const width = Math.max(42, clip.duration * pixelsPerSecond);
+              const left = clip.startTime * pixelsPerSecond;
               return (
                 <div
                   key={clip.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedClipId(clip.id);
-                    setSelectedTextLayerId(null);
-                    setSelectedAudioLayerId(null);
-                  }}
-                  onMouseDown={(e) => handleClipDragStart(e, index)}
-                  onTouchStart={(e) => handleClipDragStart(e, index)}
-                  style={{
-                    left: `${clipLeft}px`,
-                    width: `${clipWidth}px`,
-                  }}
-                  className={`absolute h-14 rounded-lg overflow-hidden border cursor-pointer transition-all flex items-center justify-between px-2 bg-zinc-900 group ${
-                    isSelected
-                      ? 'border-white shadow-[0_0_15px_rgba(255,255,255,0.4)] z-20'
-                      : 'border-[#1A1A1A] hover:border-zinc-700 opacity-90'
-                  }`}
+                  style={{ left, width }}
+                  onClick={(e) => { e.stopPropagation(); setSelectedClipId(clip.id); setSelectedTextLayerId(null); setSelectedAudioLayerId(null); }}
+                  onPointerDown={(e) => beginClipDrag(e, index)}
+                  className={`timeline-clip absolute top-1 bottom-1 overflow-hidden rounded-md border ${selected ? 'border-white shadow-[0_0_12px_rgba(255,255,255,0.35)]' : 'border-[#222]'} ${draggingClip === index ? 'opacity-60 scale-[0.98]' : ''} bg-[#111] touch-none`}
                 >
-                  {/* Clip Thumbnail Background Strip */}
-                  <div className="absolute inset-0 opacity-30 overflow-hidden pointer-events-none flex">
-                    <img src={clip.thumbnail} alt="" className="h-full object-cover min-w-full" />
+                  <img src={clip.thumbnail} alt="" className="absolute inset-0 w-full h-full object-cover opacity-35 pointer-events-none" />
+                  <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/20 to-black/70 pointer-events-none" />
+                  {selected && <div onPointerDown={(e) => handleTrimStart(e, clip, 'left')} className="trim-handle absolute left-0 top-0 bottom-0 w-5 bg-white text-black z-20 flex items-center justify-center cursor-ew-resize"><GripVertical className="w-3 h-3" /></div>}
+                  <div className="relative z-10 h-full flex items-center px-2 min-w-0 pointer-events-none">
+                    <span className="text-[9px] font-extrabold text-white uppercase truncate">{clip.name}</span>
                   </div>
-
-                  {/* Left Interactive Trim Handle */}
-                  {isSelected && (
-                    <div
-                      onMouseDown={(e) => handleTrimDragStart(e, clip, 'left')}
-                      onTouchStart={(e) => handleTrimDragStart(e, clip, 'left')}
-                      className="trim-handle absolute left-0 top-0 bottom-0 w-6 bg-white hover:bg-zinc-200 cursor-ew-resize z-30 flex items-center justify-center rounded-l shadow-[0_0_12px_rgba(255,255,255,0.9)] active:scale-110 transition-transform touch-none"
-                      title="Drag to trim start (source in)"
-                    >
-                      <GripVertical className="w-3.5 h-3.5 text-black" />
-                    </div>
-                  )}
-
-                  {/* Clip Name & Stats */}
-                  <div className="relative z-10 flex items-center gap-1.5 min-w-0 px-2 pointer-events-none">
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-white truncate drop-shadow-md">
-                      {clip.name}
-                    </span>
-                    {clip.speed !== 1 && (
-                      <span className="text-[8px] font-bold text-black bg-white px-1 rounded uppercase tracking-wider">
-                        {clip.speed}x
-                      </span>
-                    )}
-                  </div>
-
-                  <span className="relative z-10 text-[9px] font-mono text-zinc-300 bg-black/80 border border-[#1A1A1A] px-1 rounded pointer-events-none">
-                    {clip.duration.toFixed(1)}s
-                  </span>
-
-                  {/* Right Interactive Trim Handle */}
-                  {isSelected && (
-                    <div
-                      onMouseDown={(e) => handleTrimDragStart(e, clip, 'right')}
-                      onTouchStart={(e) => handleTrimDragStart(e, clip, 'right')}
-                      className="trim-handle absolute right-0 top-0 bottom-0 w-6 bg-white hover:bg-zinc-200 cursor-ew-resize z-30 flex items-center justify-center rounded-r shadow-[0_0_12px_rgba(255,255,255,0.9)] active:scale-110 transition-transform touch-none"
-                      title="Drag to trim end (source out)"
-                    >
-                      <GripVertical className="w-3.5 h-3.5 text-black" />
-                    </div>
-                  )}
+                  <span className="absolute right-1 bottom-1 z-10 text-[7px] font-mono text-white bg-black/70 px-1 rounded pointer-events-none">{clip.duration.toFixed(1)}s</span>
+                  {selected && <div onPointerDown={(e) => handleTrimStart(e, clip, 'right')} className="trim-handle absolute right-0 top-0 bottom-0 w-5 bg-white text-black z-20 flex items-center justify-center cursor-ew-resize"><GripVertical className="w-3 h-3" /></div>}
                 </div>
               );
             })}
           </div>
 
-          {/* TEXT OVERLAY TRACK */}
-          <div className="relative h-10 bg-[#0A0A0A] rounded-lg border border-[#1A1A1A] p-1 flex items-center">
-            <div className="absolute left-[-28px] top-1/2 -translate-y-1/2 text-[#666666]">
-              <Type className="w-4 h-4" />
-            </div>
-
-            {activeProject.textLayers.map((textLayer) => {
-              const isSelected = selectedTextLayerId === textLayer.id;
-              const layerWidth = textLayer.duration * pixelsPerSecond;
-              const layerLeft = textLayer.startTime * pixelsPerSecond;
-
-              return (
-                <div
-                  key={textLayer.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedTextLayerId(textLayer.id);
-                  }}
-                  style={{
-                    left: `${layerLeft}px`,
-                    width: `${layerWidth}px`,
-                  }}
-                  className={`absolute h-8 rounded-md border flex items-center px-2 bg-zinc-900 text-white text-[10px] font-bold uppercase tracking-wider truncate transition-all ${
-                    isSelected ? 'border-white shadow-[0_0_12px_rgba(255,255,255,0.4)]' : 'border-[#1A1A1A]'
-                  }`}
-                >
-                  <span className="truncate">{textLayer.text}</span>
-                </div>
-              );
-            })}
+          <div className="relative h-8 mt-1 rounded-md border border-[#151515] bg-[#080808]">
+            <div className="absolute -left-1 top-1/2 -translate-x-full -translate-y-1/2 text-[#555]"><Type className="w-3.5 h-3.5" /></div>
+            {activeProject.textLayers.map((layer) => (
+              <div key={layer.id} style={{ left: layer.startTime * pixelsPerSecond, width: Math.max(30, layer.duration * pixelsPerSecond) }} className="timeline-layer absolute inset-y-1 rounded border border-[#333] bg-[#161616] px-2 flex items-center text-[8px] text-zinc-300 font-bold truncate">{layer.text}</div>
+            ))}
           </div>
 
-          {/* AUDIO TRACK */}
-          <div className="relative h-10 bg-[#0A0A0A] rounded-lg border border-[#1A1A1A] p-1 flex items-center">
-            <div className="absolute left-[-28px] top-1/2 -translate-y-1/2 text-[#666666]">
-              <Music className="w-4 h-4" />
-            </div>
-
-            {activeProject.audioLayers.map((audioLayer) => {
-              const isSelected = selectedAudioLayerId === audioLayer.id;
-              const layerWidth = audioLayer.duration * pixelsPerSecond;
-              const layerLeft = audioLayer.startTime * pixelsPerSecond;
-
-              return (
-                <div
-                  key={audioLayer.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedAudioLayerId(audioLayer.id);
-                  }}
-                  style={{
-                    left: `${layerLeft}px`,
-                    width: `${layerWidth}px`,
-                  }}
-                  className={`absolute h-8 rounded-md border flex items-center px-2 bg-zinc-900 text-zinc-300 text-[10px] font-bold uppercase tracking-wider truncate transition-all ${
-                    isSelected ? 'border-white shadow-[0_0_12px_rgba(255,255,255,0.4)]' : 'border-[#1A1A1A]'
-                  }`}
-                >
-                  <span className="truncate">{audioLayer.name}</span>
-                </div>
-              );
-            })}
+          <div className="relative h-8 mt-1 rounded-md border border-[#151515] bg-[#080808]">
+            <div className="absolute -left-1 top-1/2 -translate-x-full -translate-y-1/2 text-[#555]"><Music className="w-3.5 h-3.5" /></div>
+            {activeProject.audioLayers.map((layer) => (
+              <div key={layer.id} style={{ left: layer.startTime * pixelsPerSecond, width: Math.max(30, layer.duration * pixelsPerSecond) }} className="timeline-layer absolute inset-y-1 rounded border border-[#333] bg-[#111] px-2 flex items-center text-[8px] text-zinc-400 font-bold truncate">{layer.name}</div>
+            ))}
           </div>
 
-          {/* PLAYHEAD GLOWING VERTICAL LINE */}
-          <div
-            style={{ left: `${currentTime * pixelsPerSecond}px` }}
-            className="absolute top-0 bottom-0 w-[2px] bg-white z-40 pointer-events-none drop-shadow-[0_0_8px_rgba(255,255,255,1)]"
-          >
-            {/* Playhead Top Needle Handle */}
-            <div className="w-3 h-3 bg-white border-2 border-black rounded-full -translate-x-1.2 -translate-y-1 shadow-md" />
+          <div style={{ left: `${currentTime * pixelsPerSecond}px` }} className="absolute top-0 bottom-0 w-px bg-white z-30 pointer-events-none shadow-[0_0_8px_rgba(255,255,255,0.9)]">
+            <div className="w-3 h-3 -ml-[5px] -mt-1 rounded-full bg-white border-2 border-black" />
           </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 };
-
