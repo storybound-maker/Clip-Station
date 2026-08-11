@@ -6,21 +6,35 @@ import { getActiveClipAtTime, formatTime, getCssFilterString } from '../../utils
 export const VideoPreview: React.FC = () => {
   const { activeProject, currentTime, setCurrentTime, isPlaying, setIsPlaying, selectedTextLayerId, setSelectedTextLayerId } = useProject();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const currentTimeRef = useRef(currentTime);
   const animationRef = useRef<number | null>(null);
-  const lastTickRef = useRef<number>(0);
+  const lastTickRef = useRef(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
+
   const active = activeProject ? getActiveClipAtTime(activeProject.clips, currentTime) : { clip: null, clipLocalTime: 0, clipIndex: -1 };
   const clip = active.clip;
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !clip || clip.type !== 'video') return;
-    if (Math.abs(video.currentTime - active.clipLocalTime) > 0.08) video.currentTime = active.clipLocalTime;
     video.playbackRate = Math.max(0.05, clip.speed || 1);
     video.volume = isMuted ? 0 : Math.min(1, Math.max(0, (clip.volume ?? 100) / 100));
-    if (isPlaying) video.play().catch(() => undefined); else video.pause();
-  }, [clip?.id, active.clipLocalTime, isPlaying, isMuted, clip]);
+    if (!isPlaying) {
+      if (Math.abs(video.currentTime - active.clipLocalTime) > 0.08) video.currentTime = active.clipLocalTime;
+      video.pause();
+    } else {
+      video.play().catch(() => undefined);
+    }
+  }, [clip?.id, isPlaying, isMuted]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !clip || clip.type !== 'video' || isPlaying) return;
+    if (Math.abs(video.currentTime - active.clipLocalTime) > 0.08) video.currentTime = active.clipLocalTime;
+  }, [active.clipLocalTime, clip?.id, isPlaying]);
 
   useEffect(() => {
     if (!isPlaying || !activeProject) return;
@@ -28,24 +42,30 @@ export const VideoPreview: React.FC = () => {
     const tick = (now: number) => {
       const delta = Math.min(0.08, Math.max(0, (now - lastTickRef.current) / 1000));
       lastTickRef.current = now;
-      const next = currentTime + delta;
-      if (next >= activeProject.duration) { setCurrentTime(0); setIsPlaying(false); return; }
+      const next = currentTimeRef.current + delta;
+      if (next >= activeProject.duration) {
+        currentTimeRef.current = 0;
+        setCurrentTime(0);
+        setIsPlaying(false);
+        return;
+      }
+      currentTimeRef.current = next;
       setCurrentTime(next);
       animationRef.current = requestAnimationFrame(tick);
     };
     animationRef.current = requestAnimationFrame(tick);
     return () => { if (animationRef.current !== null) cancelAnimationFrame(animationRef.current); };
-  }, [isPlaying, activeProject?.id, activeProject?.duration, currentTime, setCurrentTime, setIsPlaying]);
+  }, [isPlaying, activeProject?.id, activeProject?.duration, setCurrentTime, setIsPlaying]);
 
   if (!activeProject) return null;
 
   const jumpPrevious = () => {
     const previous = [...activeProject.clips].reverse().find((c) => c.startTime < currentTime - 0.15);
-    setCurrentTime(previous?.startTime ?? 0);
+    setIsPlaying(false); setCurrentTime(previous?.startTime ?? 0);
   };
   const jumpNext = () => {
     const next = activeProject.clips.find((c) => c.startTime > currentTime + 0.15);
-    setCurrentTime(next?.startTime ?? activeProject.duration);
+    setIsPlaying(false); setCurrentTime(next?.startTime ?? activeProject.duration);
   };
   const ratioClass = activeProject.aspectRatio === '9:16' ? 'aspect-[9/16] max-h-[250px] sm:max-h-[360px] md:max-h-[480px]' : activeProject.aspectRatio === '1:1' ? 'aspect-square max-h-[240px] sm:max-h-[330px] md:max-h-[420px]' : 'aspect-video max-h-[190px] sm:max-h-[280px] md:max-h-[360px]';
 
@@ -64,7 +84,7 @@ export const VideoPreview: React.FC = () => {
       <button onClick={jumpPrevious} className="w-8 h-8 rounded-lg border border-[#1A1A1A] text-[#777] flex items-center justify-center"><SkipBack className="w-3.5 h-3.5" /></button>
       <button onClick={() => setIsPlaying((prev) => !prev)} className="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center shadow-[0_0_10px_rgba(255,255,255,.25)]">{isPlaying ? <Pause className="w-4 h-4 fill-black" /> : <Play className="w-4 h-4 fill-black ml-0.5" />}</button>
       <button onClick={jumpNext} className="w-8 h-8 rounded-lg border border-[#1A1A1A] text-[#777] flex items-center justify-center"><SkipForward className="w-3.5 h-3.5" /></button>
-      <input aria-label="Timeline seek" type="range" min="0" max={activeProject.duration || 1} step="0.02" value={currentTime} onChange={(e) => setCurrentTime(Number(e.target.value))} className="flex-1 accent-white" />
+      <input aria-label="Timeline seek" type="range" min="0" max={activeProject.duration || 1} step="0.02" value={currentTime} onChange={(e) => { setIsPlaying(false); setCurrentTime(Number(e.target.value)); }} className="flex-1 accent-white" />
       <button onClick={() => setIsMuted((v) => !v)} className="w-8 h-8 text-[#777] flex items-center justify-center">{isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}</button>
       <button onClick={() => setIsFullscreen(true)} className="w-8 h-8 text-[#777] flex items-center justify-center"><Maximize2 className="w-4 h-4" /></button>
     </div>
