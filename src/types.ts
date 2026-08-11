@@ -65,6 +65,17 @@ export interface AudioLayer {
   type: 'music' | 'sfx' | 'voiceover';
 }
 
+export interface StickerLayer {
+  id: string;
+  emojiOrUrl: string;
+  startTime: number;
+  duration: number;
+  x: number;            // Percentage 0-100
+  y: number;            // Percentage 0-100
+  scale: number;        // Scale multiplier (e.g. 1)
+  rotation: number;     // Rotation angle in degrees
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -76,6 +87,7 @@ export interface Project {
   clips: Clip[];
   textLayers: TextLayer[];
   audioLayers: AudioLayer[];
+  stickerLayers?: StickerLayer[];
   isDraft: boolean;
 }
 
@@ -99,6 +111,7 @@ export type ActiveTool =
   | 'adjust'
   | 'text'
   | 'audio'
+  | 'stickers'
   | 'reorder';
 
 export type NavigationTab = 'home' | 'projects' | 'new_project' | 'editor' | 'export' | 'settings';

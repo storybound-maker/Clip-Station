@@ -379,6 +379,32 @@ export async function exportVideoCanvas(
         }
       });
 
+      // Render Active Sticker Layers
+      if (project.stickerLayers) {
+        project.stickerLayers.forEach((sticker) => {
+          if (
+            currentTime >= sticker.startTime &&
+            currentTime <= sticker.startTime + sticker.duration
+          ) {
+            ctx.save();
+            const posX = (sticker.x / 100) * width;
+            const posY = (sticker.y / 100) * height;
+            const scale = sticker.scale || 1;
+            const size = 60 * (width / 500) * scale;
+
+            ctx.translate(posX, posY);
+            if (sticker.rotation) {
+              ctx.rotate((sticker.rotation * Math.PI) / 180);
+            }
+            ctx.font = `${size}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(sticker.emojiOrUrl, 0, 0);
+            ctx.restore();
+          }
+        });
+      }
+
       // Watermark
       ctx.save();
       ctx.font = '700 18px sans-serif';

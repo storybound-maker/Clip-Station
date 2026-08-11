@@ -188,6 +188,29 @@ export const VideoPreview: React.FC = () => {
           return null;
         })}
 
+        {/* Sticker Layers Overlay */}
+        {activeProject.stickerLayers?.map((sticker) => {
+          if (
+            currentTime >= sticker.startTime &&
+            currentTime <= sticker.startTime + sticker.duration
+          ) {
+            return (
+              <div
+                key={sticker.id}
+                style={{
+                  top: `${sticker.y}%`,
+                  left: `${sticker.x}%`,
+                  transform: `translate(-50%, -50%) scale(${sticker.scale || 1}) rotate(${sticker.rotation || 0}deg)`,
+                }}
+                className="absolute text-4xl cursor-pointer z-30 select-none pointer-events-none drop-shadow-lg"
+              >
+                {sticker.emojiOrUrl}
+              </div>
+            );
+          }
+          return null;
+        })}
+
         {/* Playhead Time Overlay Tag */}
         <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/80 border border-[#1A1A1A] text-[9px] font-mono text-[#888888] pointer-events-none">
           {formatTime(currentTime)} / {formatTime(activeProject.duration)}

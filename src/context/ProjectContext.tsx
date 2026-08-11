@@ -4,6 +4,7 @@ import {
   Clip,
   TextLayer,
   AudioLayer,
+  StickerLayer,
   NavigationTab,
   ActiveTool,
   AspectRatio,
@@ -66,6 +67,10 @@ interface ProjectContextType {
   addAudioLayer: (audio: { name: string; url: string; duration: number; type: 'music' | 'sfx' | 'voiceover' }) => void;
   updateAudioLayer: (id: string, updates: Partial<AudioLayer>) => void;
   deleteAudioLayer: (id: string) => void;
+
+  // Sticker Layer Actions
+  addStickerLayer?: (emojiOrUrl: string) => void;
+  deleteStickerLayer?: (id: string) => void;
 
   // Undo / Redo
   undo: () => void;
@@ -618,6 +623,48 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     [activeProject, selectedAudioLayerId, pushHistory, saveProjectState]
   );
 
+  // Sticker Layer Actions
+  const addStickerLayer = useCallback(
+    (emojiOrUrl: string) => {
+      if (!activeProject) return;
+      pushHistory(activeProject);
+
+      const newSticker: StickerLayer = {
+        id: `sticker_${Date.now()}`,
+        emojiOrUrl: emojiOrUrl || '🔥',
+        startTime: currentTime,
+        duration: 5,
+        x: 50,
+        y: 50,
+        scale: 1,
+        rotation: 0,
+      };
+
+      const existingStickers = activeProject.stickerLayers || [];
+
+      saveProjectState({
+        ...activeProject,
+        stickerLayers: [...existingStickers, newSticker],
+      });
+    },
+    [activeProject, currentTime, pushHistory, saveProjectState]
+  );
+
+  const deleteStickerLayer = useCallback(
+    (id: string) => {
+      if (!activeProject) return;
+      pushHistory(activeProject);
+
+      const existingStickers = activeProject.stickerLayers || [];
+
+      saveProjectState({
+        ...activeProject,
+        stickerLayers: existingStickers.filter((s) => s.id !== id),
+      });
+    },
+    [activeProject, pushHistory, saveProjectState]
+  );
+
   return (
     <ProjectContext.Provider
       value={{
@@ -665,6 +712,9 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         addAudioLayer,
         updateAudioLayer,
         deleteAudioLayer,
+
+        addStickerLayer,
+        deleteStickerLayer,
 
         undo,
         redo,

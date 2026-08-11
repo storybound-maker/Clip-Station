@@ -11,6 +11,7 @@ import {
   Sliders,
   Type,
   Music,
+  Smile,
   ArrowLeftRight,
   X,
   Plus,
@@ -36,6 +37,8 @@ export const EditingToolbar: React.FC = () => {
     updateTextLayer,
     deleteTextLayer,
     addAudioLayer,
+    addStickerLayer,
+    deleteStickerLayer,
     currentTime,
   } = useProject();
 
@@ -58,6 +61,7 @@ export const EditingToolbar: React.FC = () => {
     { id: 'adjust', label: 'Adjust', icon: <Sliders className="w-4 h-4" /> },
     { id: 'text', label: 'Text', icon: <Type className="w-4 h-4" /> },
     { id: 'audio', label: 'Audio', icon: <Music className="w-4 h-4" /> },
+    { id: 'stickers', label: 'Stickers', icon: <Smile className="w-4 h-4" /> },
     { id: 'reorder', label: 'Reorder', icon: <ArrowLeftRight className="w-4 h-4" /> },
   ];
 
@@ -392,6 +396,46 @@ export const EditingToolbar: React.FC = () => {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* STICKERS TOOL */}
+          {activeTool === 'stickers' && (
+            <div className="space-y-3">
+              <span className="text-[10px] text-[#666666] font-bold uppercase tracking-wider block">Tap emoji sticker to overlay:</span>
+              <div className="grid grid-cols-5 gap-2">
+                {['🔥', '✨', '⚡', '🎬', '🍿', '💯', '❤️', '🚀', '⭐', '💥'].map((emoji) => (
+                  <button
+                    key={emoji}
+                    onClick={() => addStickerLayer && addStickerLayer(emoji)}
+                    className="p-2.5 rounded-xl bg-[#0A0A0A] border border-[#1A1A1A] hover:border-white/30 text-xl flex items-center justify-center active:scale-95 transition-all shadow-sm"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+
+              {activeProject.stickerLayers && activeProject.stickerLayers.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-[#1A1A1A]">
+                  <span className="text-[9px] text-[#666666] font-bold uppercase tracking-wider block">Active Stickers:</span>
+                  <div className="flex flex-wrap gap-2">
+                    {activeProject.stickerLayers.map((st) => (
+                      <div
+                        key={st.id}
+                        className="px-2.5 py-1 rounded-lg bg-[#0A0A0A] border border-[#1A1A1A] text-xs flex items-center gap-2 text-white font-mono"
+                      >
+                        <span>{st.emojiOrUrl}</span>
+                        <button
+                          onClick={() => deleteStickerLayer && deleteStickerLayer(st.id)}
+                          className="text-red-400 hover:text-red-300 font-bold text-[10px] ml-1"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

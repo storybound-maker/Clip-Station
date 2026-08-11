@@ -4,7 +4,9 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  const isGithubPages = process.env.GITHUB_PAGES === 'true';
   return {
+    base: isGithubPages ? '/Clip-Station/' : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
